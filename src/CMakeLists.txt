@@ -1,22 +1,33 @@
 # CherryUSB Stack library for RIA
 
+# Set CherryUSB configuration BEFORE including cherryusb.cmake
+set(CONFIG_CHERRYUSB_HOST 1)
+set(CONFIG_CHERRYUSB_HOST_HID 1)
+set(CONFIG_CHERRYUSB_HOST_MSC 1)
+set(CONFIG_CHERRYUSB_HOST_RP2040 1)
+
 include(cherryusb/cherryusb.cmake)
+list(APPEND cherryusb_incs ${CMAKE_CURRENT_LIST_DIR}/ria/usb)
+list(APPEND cherryusb_srcs ${CMAKE_CURRENT_LIST_DIR}/ria/usb/usb_osal.c)
+
 add_library(cherryusb_host STATIC ${cherryusb_srcs})
 target_include_directories(cherryusb_host PUBLIC
     ${cherryusb_incs}
-)
-
-target_compile_definitions(cherryusb_host PUBLIC
-    CONFIG_CHERRYUSB_HOST=1
-    CONFIG_CHERRYUSB_HOST_RP2040=1
-    CONFIG_CHERRYUSB_HOST_HID=1
-    CONFIG_CHERRYUSB_HOST_MSC=1
+    # ${CMAKE_CURRENT_LIST_DIR}/ria
 )
 
 target_link_libraries(cherryusb_host PUBLIC
     pico_stdlib
     hardware_dma
     hardware_pio
+)
+
+# Provide USB host class info section symbols for CherryUSB
+# These are required by CherryUSB but in a bare-metal environment without
+# actual USB host classes, we provide empty section boundaries
+target_link_options(cherryusb_host INTERFACE
+    "LINKER:--defsym=__usbh_class_info_start__=0"
+    "LINKER:--defsym=__usbh_class_info_end__=0"
 )
 
 # The Pi Pico RIA

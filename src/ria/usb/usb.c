@@ -5,6 +5,7 @@
  */
 
 #include "usbh_core.h"
+#include "hardware/structs/usb.h"
 #include "usb/hid.h"
 #include "usb/msc.h"
 #include "usb/usb.h"
@@ -19,13 +20,14 @@ static inline void DBG(const char *fmt, ...) { (void)fmt; }
 
 void usb_init(void)
 {
-    // tuh_init(TUH_OPT_RHPORT);
-    // tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
+    // Initialize CherryUSB host stack with bus 0 and USB hardware base address
+    usbh_initialize(0, USBCTRL_REGS_BASE);
 }
 
 void usb_task(void)
 {
-    // tuh_task();
+    // CherryUSB handles tasks internally through interrupts
+    // No explicit task call needed like in TinyUSB
 }
 
 void usb_print_status(void)
