@@ -5,15 +5,14 @@ set(CONFIG_CHERRYUSB_HOST 1)
 set(CONFIG_CHERRYUSB_HOST_HID 1)
 set(CONFIG_CHERRYUSB_HOST_MSC 1)
 set(CONFIG_CHERRYUSB_HOST_RP2040 1)
+set(CONFIG_CHERRYUSB_OSAL "freertos")
 
 include(cherryusb/cherryusb.cmake)
-list(APPEND cherryusb_incs ${CMAKE_CURRENT_LIST_DIR}/ria/usb)
-list(APPEND cherryusb_srcs ${CMAKE_CURRENT_LIST_DIR}/ria/usb/usb_osal.c)
 
 add_library(cherryusb_host STATIC ${cherryusb_srcs})
 target_include_directories(cherryusb_host PUBLIC
     ${cherryusb_incs}
-    # ${CMAKE_CURRENT_LIST_DIR}/ria
+    ${CMAKE_CURRENT_LIST_DIR}/ria
 )
 
 target_link_libraries(cherryusb_host PUBLIC
