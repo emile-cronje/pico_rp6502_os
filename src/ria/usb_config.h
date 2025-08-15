@@ -8,6 +8,7 @@
 #define USB_CONFIG_H
 
 #include <stdio.h>
+#include "portmacro.h"
 
 /* ================ USB common Configuration ================ */
 

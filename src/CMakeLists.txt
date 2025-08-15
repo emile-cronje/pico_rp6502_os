@@ -1,5 +1,20 @@
 # CherryUSB Stack library for RIA
 
+# Configure FreeRTOS using official Pico SDK pattern from pico-examples
+set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_SOURCE_DIR}/freertos)
+
+# Use RP2040 port for both RP2040 and RP2350 (the RP2040 port supports both)
+set(FREERTOS_KERNEL_RP2040_RELATIVE_PATH "portable/ThirdParty/GCC/RP2040")
+
+# Add FreeRTOS kernel using the official pattern
+add_subdirectory(${FREERTOS_KERNEL_PATH}/${FREERTOS_KERNEL_RP2040_RELATIVE_PATH} FREERTOS_KERNEL)
+
+# Create freertos_config target for our FreeRTOSConfig.h
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/ria
+)
+
 # Set CherryUSB configuration BEFORE including cherryusb.cmake
 set(CONFIG_CHERRYUSB_HOST 1)
 set(CONFIG_CHERRYUSB_HOST_HID 1)
@@ -8,17 +23,15 @@ set(CONFIG_CHERRYUSB_HOST_RP2040 1)
 set(CONFIG_CHERRYUSB_OSAL "freertos")
 
 include(cherryusb/cherryusb.cmake)
-
-add_library(cherryusb_host STATIC ${cherryusb_srcs})
-target_include_directories(cherryusb_host PUBLIC
-    ${cherryusb_incs}
-    ${CMAKE_CURRENT_LIST_DIR}/ria
+pico_add_library(cherryusb_host NOFLAG)
+# add_library(cherryusb_host STATIC ${cherryusb_srcs})
+# Ensure CherryUSB sources are compiled into dependents of cherryusb_host
+target_sources(cherryusb_host INTERFACE
+    ${cherryusb_srcs}
 )
-
-target_link_libraries(cherryusb_host PUBLIC
-    pico_stdlib
-    hardware_dma
-    hardware_pio
+target_include_directories(cherryusb_host_headers SYSTEM INTERFACE
+    ${cherryusb_incs}
+    # ${CMAKE_CURRENT_LIST_DIR}/ria
 )
 
 # Provide USB host class info section symbols for CherryUSB
@@ -78,6 +91,8 @@ target_link_libraries(rp6502_ria PRIVATE
     hardware_flash
     cherryusb_host
     pico_btstack_ble
+    pico_async_context_freertos
+    FreeRTOS-Kernel-Heap4
 )
 
 pico_generate_pio_header(rp6502_ria
