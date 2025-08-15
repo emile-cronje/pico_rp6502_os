@@ -1,21 +1,12 @@
-# CherryUSB Stack library for RIA
+# FreeRTOS
 
-# Configure FreeRTOS using official Pico SDK pattern from pico-examples
-set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_SOURCE_DIR}/freertos)
-
-# Use RP2040 port for both RP2040 and RP2350 (the RP2040 port supports both)
-set(FREERTOS_KERNEL_RP2040_RELATIVE_PATH "portable/ThirdParty/GCC/RP2040")
-
-# Add FreeRTOS kernel using the official pattern
-add_subdirectory(${FREERTOS_KERNEL_PATH}/${FREERTOS_KERNEL_RP2040_RELATIVE_PATH} FREERTOS_KERNEL)
-
-# Create freertos_config target for our FreeRTOSConfig.h
-add_library(freertos_config INTERFACE)
-target_include_directories(freertos_config INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/ria
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/freertos/portable/ThirdParty/GCC/RP2040
+    FREERTOS_KERNEL
 )
 
-# Set CherryUSB configuration BEFORE including cherryusb.cmake
+# CherryUSB
+
 set(CONFIG_CHERRYUSB_HOST 1)
 set(CONFIG_CHERRYUSB_HOST_HID 1)
 set(CONFIG_CHERRYUSB_HOST_MSC 1)
@@ -24,22 +15,11 @@ set(CONFIG_CHERRYUSB_OSAL "freertos")
 
 include(cherryusb/cherryusb.cmake)
 pico_add_library(cherryusb_host NOFLAG)
-# add_library(cherryusb_host STATIC ${cherryusb_srcs})
-# Ensure CherryUSB sources are compiled into dependents of cherryusb_host
 target_sources(cherryusb_host INTERFACE
     ${cherryusb_srcs}
 )
 target_include_directories(cherryusb_host_headers SYSTEM INTERFACE
     ${cherryusb_incs}
-    # ${CMAKE_CURRENT_LIST_DIR}/ria
-)
-
-# Provide USB host class info section symbols for CherryUSB
-# These are required by CherryUSB but in a bare-metal environment without
-# actual USB host classes, we provide empty section boundaries
-target_link_options(cherryusb_host INTERFACE
-    "LINKER:--defsym=__usbh_class_info_start__=0"
-    "LINKER:--defsym=__usbh_class_info_end__=0"
 )
 
 # The Pi Pico RIA
@@ -48,8 +28,15 @@ add_executable(rp6502_ria)
 pico_add_extra_outputs(rp6502_ria)
 pico_set_binary_type(rp6502_ria copy_to_ram)
 
-if (PICO_BOARD STREQUAL "pico2_w" OR
-    PICO_BOARD STREQUAL "pimoroni_pico_plus2_w_rp2350")
+# Use custom linker script for RP2350 with CherryUSB support
+pico_set_linker_script(rp6502_ria ${CMAKE_CURRENT_LIST_DIR}/ria/rp2350_copy_to_ram.ld)
+
+# Provide USB host class info section for CherryUSB
+# This includes a custom linker script to define the .usbh_class_info section
+# CherryUSB USB host class info section symbols are provided by cherryusb_symbols.c
+
+if ((PICO_BOARD STREQUAL "pico2_w") OR
+    (PICO_BOARD STREQUAL "pimoroni_pico_plus2_w_rp2350"))
     set(rp6502_ria_w TRUE)
     target_compile_definitions(rp6502_ria PRIVATE RP6502_RIA_W)
     target_link_libraries(rp6502_ria PRIVATE pico_cyw43_arch_lwip_poll pico_btstack_cyw43)
