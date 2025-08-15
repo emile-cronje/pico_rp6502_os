@@ -7,3 +7,6 @@
 [submodule "src/tinyusb"]
 	path = src/tinyusb
 	url = https://github.com/hathach/tinyusb.git
+[submodule "src/cherryusb"]
+	path = src/cherryusb
+	url = https://github.com/cherry-embedded/CherryUSB.git

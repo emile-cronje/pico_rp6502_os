@@ -1,3 +1,24 @@
+# CherryUSB Stack library for RIA
+
+include(cherryusb/cherryusb.cmake)
+add_library(cherryusb_host STATIC ${cherryusb_srcs})
+target_include_directories(cherryusb_host PUBLIC
+    ${cherryusb_incs}
+)
+
+target_compile_definitions(cherryusb_host PUBLIC
+    CONFIG_CHERRYUSB_HOST=1
+    CONFIG_CHERRYUSB_HOST_RP2040=1
+    CONFIG_CHERRYUSB_HOST_HID=1
+    CONFIG_CHERRYUSB_HOST_MSC=1
+)
+
+target_link_libraries(cherryusb_host PUBLIC
+    pico_stdlib
+    hardware_dma
+    hardware_pio
+)
+
 # The Pi Pico RIA
 
 add_executable(rp6502_ria)
@@ -46,6 +67,7 @@ target_link_libraries(rp6502_ria PRIVATE
     hardware_pwm
     hardware_flash
     tinyusb_host
+    cherryusb_host
     pico_btstack_ble
 )
 
