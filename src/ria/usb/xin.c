@@ -4,6 +4,15 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "usb/xin.h"
+
+void xin_task(void) {}
+int xin_pad_count(void) { return 0; }
+bool xin_is_xbox_one(int slot) { return false; }
+bool xin_is_xbox_360(int slot) { return false; }
+
+#if 0
+
 #include "hid/pad.h"
 #include "usb/hid.h"
 #include "usb/xin.h"
@@ -333,3 +342,5 @@ int xin_pad_count(void)
             ++count;
     return count;
 }
+
+#endif

@@ -23,7 +23,6 @@ static inline void DBG(const char *fmt, ...) { (void)fmt; }
 #endif
 
 #include "pico.h"
-#include "tusb_config.h"
 #include "net/cyw.h"
 #include "sys/cfg.h"
 #include "hid/kbd.h"

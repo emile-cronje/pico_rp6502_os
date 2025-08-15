@@ -4,8 +4,12 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+void msc_print_status(void) {};
+
+#if 1
+
 #include "main.h"
-#include "tusb.h"
+// #include "tusb.h"
 #include "usb/msc.h"
 #include "fatfs/ff.h"
 #include "fatfs/diskio.h"
@@ -73,11 +77,11 @@ typedef enum
 static msc_volume_status_t msc_volume_status[FF_VOLUMES];
 static uint8_t msc_volume_dev_addr[FF_VOLUMES];
 static FATFS msc_fatfs_volumes[FF_VOLUMES];
-static scsi_inquiry_resp_t msc_inquiry_resp[FF_VOLUMES];
+// static scsi_inquiry_resp_t msc_inquiry_resp[FF_VOLUMES];
 static uint64_t msc_volume_size[FF_VOLUMES];
 static FRESULT msc_mount_result[FF_VOLUMES];
 
-static bool msc_tuh_dev_busy[CFG_TUH_DEVICE_MAX];
+// static bool msc_tuh_dev_busy[CFG_TUH_DEVICE_MAX];
 
 // Some USB vendors pad their strings with spaces, others with zeros.
 // This will ensure zeros, which prints better.
@@ -92,139 +96,139 @@ static void rtrims(uint8_t *s, size_t l)
     }
 }
 
-void msc_print_status(void)
-{
-    int count = 0;
-    for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
-        if (msc_volume_status[vol] != msc_volume_free)
-            count++;
-    printf(MSC_PRINT_COUNT, count);
-    for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
-    {
-        switch (msc_volume_status[vol])
-        {
-        case msc_volume_inquiring:
-            printf(MSC_PRINT_INQUIRING, VolumeStr[vol]);
-            break;
-        case msc_volume_mounted:
-            const char *xb = MSC_PRINT_MB;
-            double size = msc_volume_size[vol] / (1024 * 1024);
-            if (size >= 1000)
-            {
-                xb = MSC_PRINT_GB;
-                size /= 1024;
-            }
-            if (size >= 1000)
-            {
-                xb = MSC_PRINT_TB;
-                size /= 1024;
-            }
-            size = ceil(size * 10) / 10;
-            rtrims(msc_inquiry_resp[vol].vendor_id, 8);
-            rtrims(msc_inquiry_resp[vol].product_id, 16);
-            rtrims(msc_inquiry_resp[vol].product_rev, 4);
-            printf(MSC_PRINT_MOUNTED,
-                   VolumeStr[vol],
-                   size, xb,
-                   msc_inquiry_resp[vol].vendor_id,
-                   msc_inquiry_resp[vol].product_id,
-                   msc_inquiry_resp[vol].product_rev);
-            break;
-        case msc_volume_inquiry_failed:
-            printf(MSC_PRINT_INQUIRY_FAILED, VolumeStr[vol]);
-            break;
-        case msc_volume_mount_failed:
-            printf(MSC_PRINT_MOUNT_FAILED, VolumeStr[vol], msc_mount_result[vol]);
-            break;
-        default:
-            break;
-        }
-    }
-}
+// void msc_print_status(void)
+// {
+//     int count = 0;
+//     for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
+//         if (msc_volume_status[vol] != msc_volume_free)
+//             count++;
+//     printf(MSC_PRINT_COUNT, count);
+//     for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
+//     {
+//         switch (msc_volume_status[vol])
+//         {
+//         case msc_volume_inquiring:
+//             printf(MSC_PRINT_INQUIRING, VolumeStr[vol]);
+//             break;
+//         case msc_volume_mounted:
+//             const char *xb = MSC_PRINT_MB;
+//             double size = msc_volume_size[vol] / (1024 * 1024);
+//             if (size >= 1000)
+//             {
+//                 xb = MSC_PRINT_GB;
+//                 size /= 1024;
+//             }
+//             if (size >= 1000)
+//             {
+//                 xb = MSC_PRINT_TB;
+//                 size /= 1024;
+//             }
+//             size = ceil(size * 10) / 10;
+//             rtrims(msc_inquiry_resp[vol].vendor_id, 8);
+//             rtrims(msc_inquiry_resp[vol].product_id, 16);
+//             rtrims(msc_inquiry_resp[vol].product_rev, 4);
+//             printf(MSC_PRINT_MOUNTED,
+//                    VolumeStr[vol],
+//                    size, xb,
+//                    msc_inquiry_resp[vol].vendor_id,
+//                    msc_inquiry_resp[vol].product_id,
+//                    msc_inquiry_resp[vol].product_rev);
+//             break;
+//         case msc_volume_inquiry_failed:
+//             printf(MSC_PRINT_INQUIRY_FAILED, VolumeStr[vol]);
+//             break;
+//         case msc_volume_mount_failed:
+//             printf(MSC_PRINT_MOUNT_FAILED, VolumeStr[vol], msc_mount_result[vol]);
+//             break;
+//         default:
+//             break;
+//         }
+//     }
+// }
 
-static bool inquiry_complete_cb(uint8_t dev_addr, tuh_msc_complete_data_t const *cb_data)
-{
-    uint8_t vol;
-    for (vol = 0; vol < FF_VOLUMES; vol++)
-        if (msc_volume_status[vol] == msc_volume_inquiring &&
-            msc_volume_dev_addr[vol] == dev_addr)
-            break;
-    if (vol == FF_VOLUMES)
-        return false;
+// static bool inquiry_complete_cb(uint8_t dev_addr, tuh_msc_complete_data_t const *cb_data)
+// {
+//     uint8_t vol;
+//     for (vol = 0; vol < FF_VOLUMES; vol++)
+//         if (msc_volume_status[vol] == msc_volume_inquiring &&
+//             msc_volume_dev_addr[vol] == dev_addr)
+//             break;
+//     if (vol == FF_VOLUMES)
+//         return false;
 
-    if (cb_data->csw->status != 0)
-    {
-        msc_volume_status[vol] = msc_volume_inquiry_failed;
-        return false;
-    }
-    const uint32_t block_count = tuh_msc_get_block_count(dev_addr, cb_data->cbw->lun);
-    const uint32_t block_size = tuh_msc_get_block_size(dev_addr, cb_data->cbw->lun);
-    msc_volume_size[vol] = (uint64_t)block_count * (uint64_t)block_size;
+//     if (cb_data->csw->status != 0)
+//     {
+//         msc_volume_status[vol] = msc_volume_inquiry_failed;
+//         return false;
+//     }
+//     const uint32_t block_count = tuh_msc_get_block_count(dev_addr, cb_data->cbw->lun);
+//     const uint32_t block_size = tuh_msc_get_block_size(dev_addr, cb_data->cbw->lun);
+//     msc_volume_size[vol] = (uint64_t)block_count * (uint64_t)block_size;
 
-    TCHAR volstr[6] = "USB0:";
-    volstr[3] += vol;
-    msc_mount_result[vol] = f_mount(&msc_fatfs_volumes[vol], volstr, 1);
-    if (msc_mount_result[vol] == FR_OK)
-        msc_volume_status[vol] = msc_volume_mounted;
-    else
-    {
-        msc_volume_status[vol] = msc_volume_mount_failed;
-        return false;
-    }
+//     TCHAR volstr[6] = "USB0:";
+//     volstr[3] += vol;
+//     msc_mount_result[vol] = f_mount(&msc_fatfs_volumes[vol], volstr, 1);
+//     if (msc_mount_result[vol] == FR_OK)
+//         msc_volume_status[vol] = msc_volume_mounted;
+//     else
+//     {
+//         msc_volume_status[vol] = msc_volume_mount_failed;
+//         return false;
+//     }
 
-    // If current directory invalid, change to root of this drive
-    char s[2];
-    if (FR_OK != f_getcwd(s, 2))
-    {
-        f_chdrive(volstr);
-        f_chdir("/");
-    }
+//     // If current directory invalid, change to root of this drive
+//     char s[2];
+//     if (FR_OK != f_getcwd(s, 2))
+//     {
+//         f_chdrive(volstr);
+//         f_chdir("/");
+//     }
 
-    return true;
-}
+//     return true;
+// }
 
-void tuh_msc_mount_cb(uint8_t dev_addr)
-{
-    uint8_t const lun = 0;
-    for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
-    {
-        if (msc_volume_status[vol] == msc_volume_free)
-        {
-            msc_volume_status[vol] = msc_volume_inquiring;
-            msc_volume_dev_addr[vol] = dev_addr;
-            tuh_msc_inquiry(dev_addr, lun, &msc_inquiry_resp[vol], inquiry_complete_cb, 0);
-            break;
-        }
-    }
-}
+// void tuh_msc_mount_cb(uint8_t dev_addr)
+// {
+//     uint8_t const lun = 0;
+//     for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
+//     {
+//         if (msc_volume_status[vol] == msc_volume_free)
+//         {
+//             msc_volume_status[vol] = msc_volume_inquiring;
+//             msc_volume_dev_addr[vol] = dev_addr;
+//             tuh_msc_inquiry(dev_addr, lun, &msc_inquiry_resp[vol], inquiry_complete_cb, 0);
+//             break;
+//         }
+//     }
+// }
 
-void tuh_msc_umount_cb(uint8_t dev_addr)
-{
-    for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
-    {
-        if (msc_volume_status[vol] == msc_volume_mounted &&
-            msc_volume_dev_addr[vol] == dev_addr)
-        {
-            msc_volume_status[vol] = msc_volume_free;
-            TCHAR volstr[6] = "USB0:";
-            volstr[3] += vol;
-            f_unmount(volstr);
-        }
-    }
-}
+// void tuh_msc_umount_cb(uint8_t dev_addr)
+// {
+//     for (uint8_t vol = 0; vol < FF_VOLUMES; vol++)
+//     {
+//         if (msc_volume_status[vol] == msc_volume_mounted &&
+//             msc_volume_dev_addr[vol] == dev_addr)
+//         {
+//             msc_volume_status[vol] = msc_volume_free;
+//             TCHAR volstr[6] = "USB0:";
+//             volstr[3] += vol;
+//             f_unmount(volstr);
+//         }
+//     }
+// }
 
-static void wait_for_disk_io(uint8_t dev_addr)
-{
-    while (msc_tuh_dev_busy[dev_addr - 1])
-        main_task();
-}
+// static void wait_for_disk_io(uint8_t dev_addr)
+// {
+//     while (msc_tuh_dev_busy[dev_addr - 1])
+//         main_task();
+// }
 
-static bool disk_io_complete(uint8_t dev_addr, tuh_msc_complete_data_t const *cb_data)
-{
-    (void)cb_data;
-    msc_tuh_dev_busy[dev_addr - 1] = false;
-    return true;
-}
+// static bool disk_io_complete(uint8_t dev_addr, tuh_msc_complete_data_t const *cb_data)
+// {
+//     (void)cb_data;
+//     msc_tuh_dev_busy[dev_addr - 1] = false;
+//     return true;
+// }
 
 DWORD get_fattime(void)
 {
@@ -247,8 +251,9 @@ DWORD get_fattime(void)
 
 DSTATUS disk_status(BYTE pdrv)
 {
-    uint8_t dev_addr = pdrv;
-    return tuh_msc_mounted(dev_addr) ? 0 : STA_NODISK;
+    return STA_NODISK;
+    // uint8_t dev_addr = pdrv;
+    // return tuh_msc_mounted(dev_addr) ? 0 : STA_NODISK;
 }
 
 DSTATUS disk_initialize(BYTE pdrv)
@@ -261,9 +266,9 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
 {
     uint8_t const dev_addr = msc_volume_dev_addr[pdrv];
     uint8_t const lun = 0;
-    msc_tuh_dev_busy[dev_addr - 1] = true;
-    tuh_msc_read10(dev_addr, lun, buff, sector, (uint16_t)count, disk_io_complete, 0);
-    wait_for_disk_io(dev_addr);
+    // msc_tuh_dev_busy[dev_addr - 1] = true;
+    // tuh_msc_read10(dev_addr, lun, buff, sector, (uint16_t)count, disk_io_complete, 0);
+    // wait_for_disk_io(dev_addr);
     return RES_OK;
 }
 
@@ -271,9 +276,9 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
 {
     uint8_t const dev_addr = msc_volume_dev_addr[pdrv];
     uint8_t const lun = 0;
-    msc_tuh_dev_busy[dev_addr - 1] = true;
-    tuh_msc_write10(dev_addr, lun, buff, sector, (uint16_t)count, disk_io_complete, 0);
-    wait_for_disk_io(dev_addr);
+    // msc_tuh_dev_busy[dev_addr - 1] = true;
+    // tuh_msc_write10(dev_addr, lun, buff, sector, (uint16_t)count, disk_io_complete, 0);
+    // wait_for_disk_io(dev_addr);
     return RES_OK;
 }
 
@@ -286,11 +291,13 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
     case CTRL_SYNC:
         return RES_OK;
     case GET_SECTOR_COUNT:
-        *((DWORD *)buff) = (WORD)tuh_msc_get_block_count(dev_addr, lun);
-        return RES_OK;
+        return RES_ERROR;
+        // *((DWORD *)buff) = (WORD)tuh_msc_get_block_count(dev_addr, lun);
+        // return RES_OK;
     case GET_SECTOR_SIZE:
-        *((WORD *)buff) = (WORD)tuh_msc_get_block_size(dev_addr, lun);
-        return RES_OK;
+        return RES_ERROR;
+        // *((WORD *)buff) = (WORD)tuh_msc_get_block_size(dev_addr, lun);
+        // return RES_OK;
     case GET_BLOCK_SIZE:
         *((DWORD *)buff) = 1; // 1 sector
         return RES_OK;
@@ -298,3 +305,5 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
         return RES_PARERR;
     }
 }
+
+#endif

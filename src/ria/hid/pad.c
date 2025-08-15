@@ -6,7 +6,6 @@
 
 #include <pico.h>
 #include "btstack_hid_parser.h"
-#include "tusb_config.h"
 #include "hid/pad.h"
 #include "hid/des.h"
 #include "sys/mem.h"

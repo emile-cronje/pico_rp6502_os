@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include "tusb.h"
+#include "usbh_core.h"
 #include "usb/hid.h"
 #include "usb/msc.h"
 #include "usb/usb.h"
@@ -19,13 +19,13 @@ static inline void DBG(const char *fmt, ...) { (void)fmt; }
 
 void usb_init(void)
 {
-    tuh_init(TUH_OPT_RHPORT);
-    tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
+    // tuh_init(TUH_OPT_RHPORT);
+    // tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
 }
 
 void usb_task(void)
 {
-    tuh_task();
+    // tuh_task();
 }
 
 void usb_print_status(void)

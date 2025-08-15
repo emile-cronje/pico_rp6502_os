@@ -4,6 +4,15 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "usb/hid.h"
+
+void hid_task(void) {}
+void hid_print_status(void) {}
+void hid_set_leds(uint8_t leds) {}
+int hid_pad_count(void) { return 0; }
+
+#if 0
+
 #include "tusb.h"
 #include "usb/hid.h"
 #include "hid/kbd.h"
@@ -107,3 +116,5 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t idx)
     if (pad_umount(idx))
         --hid_count_pad;
 }
+
+#endif

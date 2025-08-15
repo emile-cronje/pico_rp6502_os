@@ -38,8 +38,8 @@ endif()
 
 target_include_directories(rp6502_ria PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
-    ${CMAKE_CURRENT_LIST_DIR}/tinyusb/src
     ria
+    ${cherryusb_incs}
 )
 
 target_compile_definitions(rp6502_ria PRIVATE
@@ -66,7 +66,6 @@ target_link_libraries(rp6502_ria PRIVATE
     hardware_dma
     hardware_pwm
     hardware_flash
-    tinyusb_host
     cherryusb_host
     pico_btstack_ble
 )
