@@ -30,6 +30,12 @@ typedef struct
     uint8_t s_pointer;
 } mdm_settings_t;
 
+/* Modem state codes exposed for modern AT+ queries */
+#define MDM_STATE_ON_HOOK 0
+#define MDM_STATE_DIALING 1
+#define MDM_STATE_CONNECTED 2
+
+
 /* Main events
  */
 
@@ -60,5 +66,9 @@ bool mdm_dial(const char *s);
 bool mdm_connect(void);
 bool mdm_hangup(void);
 void mdm_carrier_lost(void);
+int mdm_get_state(void);
+bool mdm_begin_send(size_t len);
+void mdm_urc(const char *msg);
+void mdm_urc_line(const char *msg);
 
 #endif /* _RIA_NET_MDM_H_ */

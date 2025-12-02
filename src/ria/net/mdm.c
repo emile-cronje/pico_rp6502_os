@@ -55,6 +55,15 @@ static size_t mdm_response_buf_head;
 static size_t mdm_response_buf_tail;
 static int (*mdm_response_fn)(char *, size_t, int);
 static int mdm_response_state;
+static int mdm_send_prompt(char *buf, size_t buf_size, int state);
+static int mdm_urc_response(char *buf, size_t buf_size, int state);
+// URC ring buffer (messages are static const strings)
+#define MDM_URC_MAX 8
+#define MDM_URC_STRLEN 32
+static const char *mdm_urc_buf[MDM_URC_MAX];
+static char mdm_urc_linebuf[MDM_URC_MAX][MDM_URC_STRLEN];
+static uint8_t mdm_urc_head;
+static uint8_t mdm_urc_tail;
 
 typedef enum
 {
@@ -64,6 +73,7 @@ typedef enum
 } mdm_state_t;
 static mdm_state_t mdm_state;
 static bool mdm_in_command_mode;
+static size_t mdm_send_remaining;
 static bool mdm_is_parsing;
 static const char *mdm_parse_str;
 static bool mdm_parse_result;
@@ -105,6 +115,7 @@ void mdm_stop(void)
     mdm_in_command_mode = true;
     mdm_is_parsing = false;
     mdm_escape_count = 0;
+    mdm_urc_head = mdm_urc_tail = 0;
 }
 
 void mdm_init(void)
@@ -124,6 +135,7 @@ bool mdm_open(const char *filename)
         return false;
     mdm_read_settings(&mdm_settings);
     mdm_is_open = true;
+    mdm_urc_head = mdm_urc_tail = 0;
     // Optionally process filename as AT command
     // after NVRAM read. e.g. AT:&F
     if (filename[0])
@@ -568,6 +580,13 @@ void mdm_task()
         if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
             mdm_tx_buf_len = 0;
     }
+    // Publish pending URCs when not busy
+    if (mdm_response_state < 0 && mdm_urc_head != mdm_urc_tail)
+    {
+        const char *msg = mdm_urc_buf[mdm_urc_tail];
+        mdm_urc_tail = (mdm_urc_tail + 1) % MDM_URC_MAX;
+        mdm_set_response_fn(mdm_urc_response, (int)(uintptr_t)msg);
+    }
     if (mdm_is_parsing)
     {
         if (mdm_response_state >= 0)
@@ -660,6 +679,68 @@ void mdm_carrier_lost(void)
     // we are escaped into command mode, hang up.
     if (mdm_in_command_mode)
         mdm_hangup();
+}
+
+int mdm_get_state(void)
+{
+    switch (mdm_state)
+    {
+    case mdm_state_on_hook:
+        return MDM_STATE_ON_HOOK;
+    case mdm_state_dialing:
+        return MDM_STATE_DIALING;
+    case mdm_state_connected:
+        return MDM_STATE_CONNECTED;
+    }
+    return MDM_STATE_ON_HOOK;
+}
+
+bool mdm_begin_send(size_t len)
+{
+    if (mdm_state != mdm_state_connected)
+        return false;
+    if (len == 0)
+        return false;
+    mdm_send_remaining = len;
+    // Emit '>' prompt
+    mdm_set_response_fn(mdm_send_prompt, 0);
+    return true;
+}
+
+static int mdm_send_prompt(char *buf, size_t buf_size, int state)
+{
+    (void)state;
+    snprintf(buf, buf_size, "> ");
+    return -1;
+}
+
+static int mdm_urc_response(char *buf, size_t buf_size, int state)
+{
+    const char *s = (const char *)(uintptr_t)state;
+    snprintf(buf, buf_size, "%s\r\n", s);
+    return -1;
+}
+
+void mdm_urc(const char *msg)
+{
+    uint8_t next = (mdm_urc_head + 1) % MDM_URC_MAX;
+    if (next != mdm_urc_tail)
+    {
+        mdm_urc_buf[mdm_urc_head] = msg;
+        mdm_urc_head = next;
+    }
+}
+
+void mdm_urc_line(const char *msg)
+{
+    uint8_t next = (mdm_urc_head + 1) % MDM_URC_MAX;
+    if (next != mdm_urc_tail)
+    {
+        strncpy(mdm_urc_linebuf[mdm_urc_head], msg, MDM_URC_STRLEN - 1);
+        mdm_urc_linebuf[mdm_urc_head][MDM_URC_STRLEN - 1] = 0;
+        mdm_urc_buf[mdm_urc_head] = mdm_urc_linebuf[mdm_urc_head];
+        mdm_urc_head = next;
+    }
 }
 
 #endif /* RP6502_RIA_W */

@@ -6,7 +6,9 @@
 
 #include "net/cmd.h"
 #include "net/mdm.h"
+#include "net/tel.h"
 #include "sys/cfg.h"
+#include "sys/mem.h"
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -17,6 +19,10 @@
 #else
 static inline void DBG(const char *fmt, ...) { (void)fmt; }
 #endif
+
+// Forward decls for modern AT responses
+static int cmd_plus_cipstatus_response(char *buf, size_t buf_size, int state);
+static int cmd_plus_ciprecv_response(char *buf, size_t buf_size, int state);
 
 // The design philosophy here is to use AT+XXX? and AT+XXX=YYY
 // for everything modern like WiFi and telnet configuration.
@@ -527,7 +533,122 @@ static bool cmd_parse_modern(const char **s)
         (*s) += 4;
         return cmd_plus_pass(s);
     }
+    // Basic TCP commands (single connection) mapped onto existing modem/telnet stack.
+    // AT+CIPSTART="host",port
+    if (!strncasecmp(*s, "CIPSTART", 8))
+    {
+        (*s) += 8;
+        if (**s != '=') return false;
+        ++*s;
+        if (**s != '"') return false;
+        ++*s;
+        const char *host_begin = *s;
+        while (**s && **s != '"') ++*s;
+        if (**s != '"') return false;
+        size_t host_len = *s - host_begin;
+        ++*s;
+        if (**s != ',') return false;
+        ++*s;
+        // parse port
+        int port = 0;
+        if (!(**s >= '0' && **s <= '9')) return false;
+        while (**s >= '0' && **s <= '9') { port = port * 10 + (**s - '0'); ++*s; }
+        if (port <= 0 || port > 65535) return false;
+        // construct host:port string for mdm_dial
+        if (host_len + 6 >= MBUF_SIZE) return false; // crude limit
+        char *buf = (char *)mbuf;
+        memcpy(buf, host_begin, host_len);
+        buf[host_len] = ':';
+        snprintf(buf + host_len + 1, MBUF_SIZE - host_len - 1, "%d", port);
+        return mdm_dial(buf);
+    }
+    // AT+CIPCLOSE
+    if (!strncasecmp(*s, "CIPCLOSE", 8))
+    {
+        (*s) += 8;
+        // optional =, ignored for single session
+        if (**s == '=') { ++*s; while (**s && **s != ',') ++*s; }
+        return mdm_hangup();
+    }
+    // AT+CIPSTATUS? -> returns status string
+    if (!strncasecmp(*s, "CIPSTATUS", 9))
+    {
+        (*s) += 9;
+        if (**s != '?') return false;
+        ++*s;
+        mdm_set_response_fn(cmd_plus_cipstatus_response, 0);
+        return true;
+    }
+    // AT+CIPSEND="text"  (sends raw text)
+    if (!strncasecmp(*s, "CIPSEND", 7))
+    {
+        (*s) += 7;
+        if (**s == '=') { ++*s; }
+        // support length prompt mode: AT+CIPSEND=<len>
+        const char *p = *s;
+        int len = 0;
+        while (*p >= '0' && *p <= '9') { len = len*10 + (*p - '0'); ++p; }
+        if (p != *s && len > 0)
+        {
+            *s = p;
+            return mdm_begin_send((size_t)len);
+        }
+        // fallback quoted mode: AT+CIPSEND="text"
+        if (**s != '"') return false;
+        ++*s;
+        while (**s && **s != '"')
+        {
+            if (mdm_tx(**s) < 0) return false;
+            ++*s;
+        }
+        if (**s != '"') return false;
+        ++*s;
+        return true;
+    }
+    // AT+CIPRECVDATA=<len>  (pull up to len bytes from RX buffer)
+    if (!strncasecmp(*s, "CIPRECVDATA", 11))
+    {
+        (*s) += 11;
+        if (**s != '=') return false;
+        ++*s;
+        int req = 0;
+        while (**s >= '0' && **s <= '9') { req = req*10 + (**s - '0'); ++*s; }
+        if (req <= 0) return false;
+        mdm_set_response_fn(cmd_plus_ciprecv_response, req);
+        return true;
+    }
     return false;
+}
+
+static int cmd_plus_cipstatus_response(char *buf, size_t buf_size, int state)
+{
+    (void)state;
+    int ms = mdm_get_state();
+    const char *str = (ms==MDM_STATE_CONNECTED)?"CONNECTED":(ms==MDM_STATE_DIALING?"DIALING":"ON_HOOK");
+    snprintf(buf, buf_size, "STATUS:%s\r\n", str);
+    return -1;
+}
+
+static int cmd_plus_ciprecv_response(char *buf, size_t buf_size, int state)
+{
+    int remaining = state;
+    size_t pos = 0;
+    // header
+    int n = snprintf(buf, buf_size, "+DATA:");
+    pos += (n > 0 ? (size_t)n : 0);
+    // pull bytes up to buffer capacity
+    while (remaining > 0 && pos + 4 < buf_size)
+    {
+        char ch;
+        int r = tel_rx(&ch);
+        if (r <= 0) break;
+        buf[pos++] = ch;
+        --remaining;
+    }
+    // newline
+    if (pos + 2 < buf_size) { buf[pos++] = '\r'; buf[pos++] = '\n'; }
+    buf[pos] = 0;
+    return -1;
 }
 
 // Parse AT command (without the AT)

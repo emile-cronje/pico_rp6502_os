@@ -8,6 +8,7 @@
 
 #include "net/mdm.h"
 #include "net/tel.h"
+#include <string.h>
 #include <lwip/tcp.h>
 #include <lwip/dns.h>
 
@@ -131,6 +132,7 @@ static err_t tel_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     {
         tel_state = tel_state_closing;
         mdm_carrier_lost();
+        mdm_urc("+LINK:CLOSED");
         if (tel_pbuf_head == tel_pbuf_tail)
             tel_close();
         return ERR_OK;
@@ -139,6 +141,10 @@ static err_t tel_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     {
         tel_pbufs[tel_pbuf_head] = p;
         tel_pbuf_head = (tel_pbuf_head + 1) % PBUF_POOL_SIZE;
+        // Announce receive length of first pbuf via owned URC buffer
+        char tmp[32];
+        snprintf(tmp, sizeof(tmp), "+RECV:%u", (unsigned)p->len);
+        mdm_urc_line(tmp);
         return ERR_OK;
     }
     return ERR_ABRT;
@@ -153,6 +159,7 @@ static err_t tel_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
     DBG("NET TEL TCP Connected %d\n", err);
     tel_state = tel_state_connected;
     mdm_connect();
+    mdm_urc("+LINK:CONNECTED");
     return ERR_OK;
 }
 
