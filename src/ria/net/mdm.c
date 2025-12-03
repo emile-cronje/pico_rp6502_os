@@ -74,6 +74,8 @@ typedef enum
 static mdm_state_t mdm_state;
 static bool mdm_in_command_mode;
 static size_t mdm_send_remaining;
+static bool mdm_in_send_mode;
+static bool mdm_send_deferred_ok;
 static bool mdm_is_parsing;
 static const char *mdm_parse_str;
 static bool mdm_parse_result;
@@ -106,13 +108,18 @@ void mdm_stop(void)
     tel_close();
     mdm_is_open = false;
     mdm_cmd_buf_len = 0;
+    memset(mdm_cmd_buf, 0, sizeof(mdm_cmd_buf));
     mdm_tx_buf_len = 0;
     mdm_response_buf_head = 0;
     mdm_response_buf_tail = 0;
     mdm_response_state = -1;
     mdm_parse_result = true;
+    mdm_is_parsing = false;
     mdm_state = mdm_state_on_hook;
     mdm_in_command_mode = true;
+    mdm_in_send_mode = false;
+    mdm_send_remaining = 0;
+    mdm_send_deferred_ok = false;
     mdm_is_parsing = false;
     mdm_escape_count = 0;
     mdm_urc_head = mdm_urc_tail = 0;
@@ -263,6 +270,12 @@ static int mdm_tx_command_mode(char ch)
         if (mdm_settings.echo)
             mdm_response_append_cr_lf();
         mdm_cmd_buf[mdm_cmd_buf_len] = 0;
+        DBG("MDM: Received CR, cmd_buf='%s', len=%zu, is_at=%d\n", 
+            mdm_cmd_buf, mdm_cmd_buf_len, mdm_cmd_buf_is_at_command());
+        DBG("MDM: Buffer hex dump [0-5]: %02x %02x %02x %02x %02x %02x\n",
+            (unsigned char)mdm_cmd_buf[0], (unsigned char)mdm_cmd_buf[1], 
+            (unsigned char)mdm_cmd_buf[2], (unsigned char)mdm_cmd_buf[3],
+            (unsigned char)mdm_cmd_buf[4], (unsigned char)mdm_cmd_buf[5]);
         mdm_cmd_buf_len = 0;
         if (mdm_cmd_buf_is_at_command())
         {
@@ -271,6 +284,8 @@ static int mdm_tx_command_mode(char ch)
             mdm_is_parsing = true;
             mdm_parse_result = true;
             mdm_parse_str = &mdm_cmd_buf[2];
+            DBG("MDM: Starting parse, parse_str='%s', parse_str[0]=0x%02x, &cmd_buf[2]=%p, in_command_mode=%d\n",
+                mdm_parse_str, (unsigned char)*mdm_parse_str, (void*)&mdm_cmd_buf[2], mdm_in_command_mode);
         }
     }
     else if (ch == 127 || (!(mdm_settings.bs_char & 0x80) && ch == mdm_settings.bs_char))
@@ -339,6 +354,23 @@ int mdm_tx(char ch)
     if (!mdm_is_open)
         return -1;
     mdm_tx_escape_observer(ch);
+    // Handle send prompt mode (AT+CIPSEND=len)
+    if (mdm_in_send_mode && mdm_send_remaining > 0)
+    {
+        int result = mdm_tx_connected(ch);
+        if (result > 0)
+        {
+            mdm_send_remaining--;
+            if (mdm_send_remaining == 0)
+            {
+                // All bytes sent, return to command mode
+                mdm_in_send_mode = false;
+                // Flag that we need to send OK in mdm_task
+                mdm_send_deferred_ok = true;
+            }
+        }
+        return result;
+    }
     if (mdm_in_command_mode)
     {
         if (!mdm_is_parsing)
@@ -587,23 +619,32 @@ void mdm_task()
         mdm_urc_tail = (mdm_urc_tail + 1) % MDM_URC_MAX;
         mdm_set_response_fn(mdm_urc_response, (int)(uintptr_t)msg);
     }
+    // Send deferred OK if send mode completed
+    if (mdm_send_deferred_ok && mdm_response_state < 0)
+    {
+        mdm_send_deferred_ok = false;
+        mdm_set_response_fn(mdm_response_code, 0); // OK
+    }
     if (mdm_is_parsing)
     {
         if (mdm_response_state >= 0)
             return;
         if (!mdm_parse_result)
         {
+            DBG("MDM: Parse failed, sending ERROR\n");
             mdm_is_parsing = false;
             mdm_set_response_fn(mdm_response_code, 4); // ERROR
         }
         else if (*mdm_parse_str == 0)
         {
+            DBG("MDM: Parse complete, parse_str empty, in_command_mode=%d\n", mdm_in_command_mode);
             mdm_is_parsing = false;
             if (mdm_in_command_mode)
                 mdm_set_response_fn(mdm_response_code, 0); // OK
         }
         else
         {
+            DBG("MDM: Parsing next char: '%c' (0x%02x)\n", *mdm_parse_str, *mdm_parse_str);
             mdm_parse_result = cmd_parse(&mdm_parse_str);
         }
     }
@@ -638,7 +679,9 @@ bool mdm_dial(const char *s)
     if (tel_open(buf, port))
     {
         mdm_state = mdm_state_dialing;
-        mdm_in_command_mode = false;
+        // Stay in command mode for ESP8266 compatibility
+        // The modem will send OK, then async CONNECT notification
+        mdm_in_command_mode = true;
         return true;
     }
     return false;
@@ -654,7 +697,9 @@ bool mdm_connect(void)
         else
             mdm_set_response_fn(mdm_response_code, 1); // CONNECT
         mdm_state = mdm_state_connected;
-        mdm_in_command_mode = false;
+        // Stay in command mode for ESP8266 compatibility
+        // Data is sent via AT+CIPSEND, not by going offline
+        mdm_in_command_mode = true;
         return true;
     }
     return false;
@@ -702,6 +747,8 @@ bool mdm_begin_send(size_t len)
     if (len == 0)
         return false;
     mdm_send_remaining = len;
+    // Don't enter send mode yet - wait for prompt to be sent
+    mdm_in_send_mode = false;
     // Emit '>' prompt
     mdm_set_response_fn(mdm_send_prompt, 0);
     return true;
@@ -711,6 +758,8 @@ static int mdm_send_prompt(char *buf, size_t buf_size, int state)
 {
     (void)state;
     snprintf(buf, buf_size, "> ");
+    // After sending the prompt, enter send mode
+    mdm_in_send_mode = true;
     return -1;
 }
 

@@ -34,7 +34,7 @@ def main():
    #     sys.exit(1)
     
     #port = sys.argv[1]
-    port = "/dev/ttyACM1"
+    port = "/dev/ttyACM0"
     
     # Open serial connection
     print(f"Opening {port} at 115200 baud...")
@@ -44,15 +44,24 @@ def main():
     # Flush any startup messages
     ser.reset_input_buffer()
     
+    SSID = "Cudy24G"
+    PWD  = "ZAnne19991214"
+    IP   = "192.168.10.250"  # your TCP server IP
+    PORT = 8080             # your TCP server port
+    
+    
     # Basic AT test
     send_at(ser, "AT")
+    send_at(ser, "ATE0")
+    send_at(ser, "AT+CWMODE=3")
+    send_at(ser, 'AT+CWJAP="%s","%s"' % (SSID, PWD))
+    send_at(ser, "AT+CIFSR")
+    send_at(ser, "AT+CIPMUX=0")
+    send_at(ser, "AT+CIPMODE=0")
+    send_at(ser, 'AT+CIPSTART="TCP","%s",%s' % (IP, PORT))                
     
     # Check status (should be ON_HOOK)
     send_at(ser, "AT+CIPSTATUS?")
-    
-    # Connect to echo server (tcpbin.com:4242 or any available echo service)
-    # Note: Replace with your own test server if needed
-    send_at(ser, 'AT+CIPSTART="tcpbin.com",4242', wait=3.0)
     
     # Check status (should be CONNECTED)
     send_at(ser, "AT+CIPSTATUS?")
@@ -71,7 +80,7 @@ def main():
     
     # Wait for echo response (allow time for data to arrive)
     time.sleep(1.5)
-    
+
     # Pull received data
     send_at(ser, "AT+CIPRECVDATA=50", wait=0.5)
     

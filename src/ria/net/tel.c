@@ -159,7 +159,7 @@ static err_t tel_connected(void *arg, struct tcp_pcb *tpcb, err_t err)
     DBG("NET TEL TCP Connected %d\n", err);
     tel_state = tel_state_connected;
     mdm_connect();
-    mdm_urc("+LINK:CONNECTED");
+    mdm_urc("CONNECT");
     return ERR_OK;
 }
 

@@ -1,0 +1,117 @@
+┌─────────────────────────────────────────────────────────────────────┐
+│  Pico Debug Probe to Pico 2 W Wiring Guide                         │
+└─────────────────────────────────────────────────────────────────────┘
+
+DEBUG PROBE CONNECTOR (3-pin JST-SH or 10-pin 0.05" connector):
+┌─────────────────────────────────┐
+│  Standard ARM SWD 10-pin Layout │
+├──────┬──────────────────────────┤
+│ Pin  │ Signal                   │
+├──────┼──────────────────────────┤
+│  1   │ VTG (Target Voltage)     │  ← DO NOT CONNECT
+│  2   │ SWDIO / TMS              │  → Pico 2W Pin 25 (SWDIO)
+│  3   │ GND                      │  → Pico 2W GND (any GND pin)
+│  4   │ SWCLK / TCK              │  → Pico 2W Pin 24 (SWCLK)
+│  5   │ GND                      │  → Pico 2W GND (optional)
+│  6   │ SWO / TDO                │  ← Not needed
+│  7   │ KEY (no pin)             │
+│  8   │ NC / TDI                 │  ← Not needed
+│  9   │ GND/nRESET               │  → Pico 2W Pin 30 (RUN) [OPTIONAL but helpful]
+│ 10   │ nRESET                   │  → Pico 2W Pin 30 (RUN) [OPTIONAL but helpful]
+└──────┴──────────────────────────┘
+
+If using 3-wire JST-SH connector on some Debug Probes:
+┌──────┬──────────────────────────┐
+│ Pin  │ Signal                   │
+├──────┼──────────────────────────┤
+│  1   │ SWCLK                    │  → Pico 2W Pin 24 (SWCLK)
+│  2   │ GND                      │  → Pico 2W GND
+│  3   │ SWDIO                    │  → Pico 2W Pin 25 (SWDIO)
+└──────┴──────────────────────────┘
+
+
+PICO 2 W PINOUT (relevant pins):
+                    ┌─────────┐
+               GP0  │1      40│ VBUS
+               GP1  │2      39│ VSYS
+               GND  │3      38│ GND
+               GP2  │4      37│ 3V3_EN
+               GP3  │5      36│ 3V3(OUT)
+               GP4  │6      35│ ADC_VREF
+               GP5  │7      34│ GP28_A2
+               GND  │8      33│ AGND/GND
+               GP6  │9      32│ GP27_A1
+               GP7  │10     31│ GP26_A0
+               GP8  │11     30│ RUN (RESET)    ← nRESET [OPTIONAL]
+               GP9  │12     29│ GP22
+               GND  │13     28│ GND
+              GP10  │14     27│ GP21
+              GP11  │15     26│ GP20
+              GP12  │16     25│ GP19/SWDIO     ← SWDIO (Debug Probe Pin 2)
+              GP13  │17     24│ GP18/SWCLK     ← SWCLK (Debug Probe Pin 4)
+                    └─────────┘
+
+REQUIRED CONNECTIONS (minimum):
+  Debug Probe Pin 2 (SWDIO)  →  Pico 2W Pin 25 (GP19/SWDIO)
+  Debug Probe Pin 4 (SWCLK)  →  Pico 2W Pin 24 (GP18/SWCLK)
+  Debug Probe Pin 3 (GND)    →  Pico 2W GND (Pin 3, 8, 13, 18, 23, 28, 33, or 38)
+
+RECOMMENDED CONNECTION (for reliable resets):
+  Debug Probe Pin 9/10 (nRESET) → Pico 2W Pin 30 (RUN)
+
+POWER:
+  • Pico 2W MUST be powered separately via USB (Pin 40) or VSYS (Pin 39)
+  • Do NOT connect Debug Probe Pin 1 (VTG) - it's for voltage reference only
+
+
+TROUBLESHOOTING CHECKLIST:
+
+□ 1. Verify Debug Probe USB is connected
+     Run: lsusb | grep "Debug Probe"
+     Should show: "2e8a:000c Raspberry Pi Debug Probe"
+
+□ 2. Verify Pico 2W is powered
+     • Check LED is on when USB connected
+     • Run: lsusb | grep "2e8a"
+     • Should see a Raspberry Pi device
+
+□ 3. Check wiring with multimeter (continuity mode)
+     • Debug Probe Pin 2 ←→ Pico Pin 25 (should beep)
+     • Debug Probe Pin 4 ←→ Pico Pin 24 (should beep)
+     • Debug Probe Pin 3 ←→ Pico GND (should beep)
+
+□ 4. Try BOOTSEL mode to clear any running firmware
+     a. Disconnect Debug Probe SWD wires from Pico
+     b. Hold BOOTSEL button on Pico 2W
+     c. Press RESET button (or unplug/replug USB while holding BOOTSEL)
+     d. Release BOOTSEL - Pico should mount as USB drive
+     e. Reconnect Debug Probe wires
+     f. Run test: ~/pico_rp6502_os/test_debug_connection.sh
+
+□ 5. If still failing, try adding RESET line:
+     Connect Debug Probe Pin 9 or 10 → Pico Pin 30 (RUN)
+     This allows OpenOCD to hardware reset the chip
+
+
+COMMON MISTAKES:
+
+✗ Wrong pins - Easy to miscount! Pin 24 and 25 are near the bottom
+✗ Swapped SWCLK/SWDIO - Double-check which is which
+✗ Pico not powered - Must have separate power via USB
+✗ Loose connections - Push jumper wires firmly
+✗ Debug Probe VTG connected - Pin 1 should NOT be connected
+
+
+TEST YOUR CONNECTION:
+
+Run this command to test:
+  cd ~/pico_rp6502_os
+  ./test_debug_connection.sh
+
+Success looks like:
+  ✓ Debug Probe detected on USB
+  ✓ SWD connection successful!
+
+Failure looks like:
+  ✗ SWD connection FAILED
+  Error: Error connecting DP: cannot read IDR

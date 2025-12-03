@@ -13,6 +13,12 @@
 #include <ctype.h>
 #include <string.h>
 
+#ifdef RP6502_RIA_W
+#include <pico/cyw43_arch.h>
+#include <lwip/netif.h>
+#include <lwip/ip4_addr.h>
+#endif
+
 #if defined(DEBUG_RIA_NET) || defined(DEBUG_RIA_NET_CMD)
 #include <stdio.h>
 #define DBG(...) fprintf(stderr, __VA_ARGS__)
@@ -23,6 +29,7 @@ static inline void DBG(const char *fmt, ...) { (void)fmt; }
 // Forward decls for modern AT responses
 static int cmd_plus_cipstatus_response(char *buf, size_t buf_size, int state);
 static int cmd_plus_ciprecv_response(char *buf, size_t buf_size, int state);
+static int cmd_plus_cifsr_response(char *buf, size_t buf_size, int state);
 
 // The design philosophy here is to use AT+XXX? and AT+XXX=YYY
 // for everything modern like WiFi and telnet configuration.
@@ -483,6 +490,27 @@ static bool cmd_plus_ssid(const char **s)
     return false;
 }
 
+// +CIFSR response - Get local IP address
+static int cmd_plus_cifsr_response(char *buf, size_t buf_size, int state)
+{
+    (void)state;
+#ifdef RP6502_RIA_W
+    struct netif *netif = &cyw43_state.netif[CYW43_ITF_STA];
+    if (!ip4_addr_isany_val(*netif_ip4_addr(netif)))
+    {
+        const ip4_addr_t *ip4 = netif_ip4_addr(netif);
+        snprintf(buf, buf_size, "+CIFSR:STAIP,\"%s\"\r\n", ip4addr_ntoa(ip4));
+    }
+    else
+    {
+        snprintf(buf, buf_size, "+CIFSR:STAIP,\"0.0.0.0\"\r\n");
+    }
+#else
+    snprintf(buf, buf_size, "+CIFSR:STAIP,\"0.0.0.0\"\r\n");
+#endif
+    return -1;
+}
+
 // +PASS?
 static int cmd_plus_pass_response(char *buf, size_t buf_size, int state)
 {
@@ -533,8 +561,80 @@ static bool cmd_parse_modern(const char **s)
         (*s) += 4;
         return cmd_plus_pass(s);
     }
+    // AT+CWJAP="ssid","password" - ESP8266 compatible WiFi connect
+    if (!strncasecmp(*s, "CWJAP", 5))
+    {
+        (*s) += 5;
+        if (**s != '=') return false;
+        ++*s;
+        // Parse SSID
+        if (**s != '"') return false;
+        ++*s;
+        const char *ssid_begin = *s;
+        while (**s && **s != '"') ++*s;
+        if (**s != '"') return false;
+        size_t ssid_len = *s - ssid_begin;
+        ++*s;
+        // Expect comma
+        if (**s != ',') return false;
+        ++*s;
+        // Parse password
+        if (**s != '"') return false;
+        ++*s;
+        const char *pass_begin = *s;
+        while (**s && **s != '"') ++*s;
+        if (**s != '"') return false;
+        size_t pass_len = *s - pass_begin;
+        ++*s;
+        // Copy SSID to temporary buffer
+        if (ssid_len >= MBUF_SIZE) return false;
+        char *buf = (char *)mbuf;
+        memcpy(buf, ssid_begin, ssid_len);
+        buf[ssid_len] = 0;
+        if (!cfg_set_ssid(buf)) return false;
+        // Copy password to temporary buffer
+        if (pass_len >= MBUF_SIZE) return false;
+        memcpy(buf, pass_begin, pass_len);
+        buf[pass_len] = 0;
+        if (!cfg_set_pass(buf)) return false;
+        // Save to NVRAM
+        return mdm_write_settings(&mdm_settings);
+    }
+    // AT+CIFSR - Get IP address (ESP8266 compatible)
+    if (!strncasecmp(*s, "CIFSR", 5))
+    {
+        (*s) += 5;
+        mdm_set_response_fn(cmd_plus_cifsr_response, 0);
+        return true;
+    }
+    // AT+CIPMUX=<mode> - Set connection mode (ESP8266 compatible)
+    // This implementation only supports single connection (mode=0)
+    // mode=0: single connection, mode=1: multiple connections
+    if (!strncasecmp(*s, "CIPMUX", 6))
+    {
+        (*s) += 6;
+        if (**s != '=') return false;
+        ++*s;
+        int mode = cmd_parse_num(s);
+        // We only support single connection mode (0)
+        // Return OK for mode=0, ERROR for mode=1
+        return (mode == 0);
+    }
+    // AT+CIPMODE=<mode> - Set transmission mode (ESP8266 compatible)
+    // mode=0: normal mode (AT commands), mode=1: transparent transmission
+    // We only support normal mode (0)
+    if (!strncasecmp(*s, "CIPMODE", 7))
+    {
+        (*s) += 7;
+        if (**s != '=') return false;
+        ++*s;
+        int mode = cmd_parse_num(s);
+        // We only support normal mode (0)
+        return (mode == 0);
+    }
     // Basic TCP commands (single connection) mapped onto existing modem/telnet stack.
-    // AT+CIPSTART="host",port
+    // AT+CIPSTART="TCP","host",port  (ESP8266 format)
+    // AT+CIPSTART="host",port        (simplified format)
     if (!strncasecmp(*s, "CIPSTART", 8))
     {
         (*s) += 8;
@@ -542,11 +642,35 @@ static bool cmd_parse_modern(const char **s)
         ++*s;
         if (**s != '"') return false;
         ++*s;
-        const char *host_begin = *s;
+        const char *first_param_begin = *s;
         while (**s && **s != '"') ++*s;
         if (**s != '"') return false;
-        size_t host_len = *s - host_begin;
+        size_t first_param_len = *s - first_param_begin;
         ++*s;
+        
+        // Check if this is ESP8266 format with connection type
+        const char *host_begin;
+        size_t host_len;
+        if (**s == ',')
+        {
+            // ESP8266 format: AT+CIPSTART="TCP","host",port
+            // Skip the connection type (TCP/UDP) - we only support TCP anyway
+            ++*s;
+            if (**s != '"') return false;
+            ++*s;
+            host_begin = *s;
+            while (**s && **s != '"') ++*s;
+            if (**s != '"') return false;
+            host_len = *s - host_begin;
+            ++*s;
+        }
+        else
+        {
+            // Simplified format: AT+CIPSTART="host",port
+            host_begin = first_param_begin;
+            host_len = first_param_len;
+        }
+        
         if (**s != ',') return false;
         ++*s;
         // parse port
@@ -655,6 +779,14 @@ static int cmd_plus_ciprecv_response(char *buf, size_t buf_size, int state)
 bool cmd_parse(const char **s)
 {
     char ch = **s;
+    DBG("CMD: cmd_parse called, ch='%c' (0x%02x), s=%p, *s=%p\n", 
+        (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch, (void*)s, (void*)*s);
+    // Safety check: if we hit null terminator or invalid char, stop
+    if (ch == 0 || (unsigned char)ch >= 128)
+    {
+        DBG("CMD: Rejecting invalid/null character\n");
+        return false;
+    }
     ++*s;
     switch (toupper(ch))
     {
