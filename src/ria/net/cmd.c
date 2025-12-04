@@ -778,13 +778,14 @@ static int cmd_plus_ciprecv_response(char *buf, size_t buf_size, int state)
 // Parse AT command (without the AT)
 bool cmd_parse(const char **s)
 {
+    if (s == NULL || *s == NULL)
+        return false;
+        
     char ch = **s;
-    DBG("CMD: cmd_parse called, ch='%c' (0x%02x), s=%p, *s=%p\n", 
-        (ch >= 32 && ch < 127) ? ch : '?', (unsigned char)ch, (void*)s, (void*)*s);
-    // Safety check: if we hit null terminator or invalid char, stop
-    if (ch == 0 || (unsigned char)ch >= 128)
+    // Safety check: reject null terminator and non-ASCII characters
+    unsigned char uch = (unsigned char)ch;
+    if (uch == 0 || uch >= 128)
     {
-        DBG("CMD: Rejecting invalid/null character\n");
         return false;
     }
     ++*s;

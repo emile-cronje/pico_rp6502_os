@@ -108,7 +108,7 @@ void mdm_stop(void)
     tel_close();
     mdm_is_open = false;
     mdm_cmd_buf_len = 0;
-    memset(mdm_cmd_buf, 0, sizeof(mdm_cmd_buf));
+    memset(mdm_cmd_buf, 0, sizeof(mdm_cmd_buf));  // Zero entire buffer
     mdm_tx_buf_len = 0;
     mdm_response_buf_head = 0;
     mdm_response_buf_tail = 0;
@@ -120,7 +120,6 @@ void mdm_stop(void)
     mdm_in_send_mode = false;
     mdm_send_remaining = 0;
     mdm_send_deferred_ok = false;
-    mdm_is_parsing = false;
     mdm_escape_count = 0;
     mdm_urc_head = mdm_urc_tail = 0;
 }
@@ -184,15 +183,10 @@ void mdm_set_response_fn(int (*fn)(char *, size_t, int), int state)
 {
     if (mdm_response_state >= 0)
     {
-#ifndef NDEBUG
-        assert(false);
-#endif
-        // Responses aren't being consumed.
-        // This shouldn't happen, but what the
-        // 6502 app does is beyond our control.
+        // Responses aren't being consumed fast enough.
         // Discard all the old data. This way the
         // 6502 app doesn't get a mix of old and new
-        // data when it finally decides to wake up.
+        // data when it finally decides to read again.
         mdm_response_buf_head = mdm_response_buf_tail = 0;
     }
     mdm_response_fn = fn;
@@ -269,13 +263,13 @@ static int mdm_tx_command_mode(char ch)
     {
         if (mdm_settings.echo)
             mdm_response_append_cr_lf();
-        mdm_cmd_buf[mdm_cmd_buf_len] = 0;
-        DBG("MDM: Received CR, cmd_buf='%s', len=%zu, is_at=%d\n", 
-            mdm_cmd_buf, mdm_cmd_buf_len, mdm_cmd_buf_is_at_command());
-        DBG("MDM: Buffer hex dump [0-5]: %02x %02x %02x %02x %02x %02x\n",
-            (unsigned char)mdm_cmd_buf[0], (unsigned char)mdm_cmd_buf[1], 
-            (unsigned char)mdm_cmd_buf[2], (unsigned char)mdm_cmd_buf[3],
-            (unsigned char)mdm_cmd_buf[4], (unsigned char)mdm_cmd_buf[5]);
+        // Null-terminate the command at current position
+        if (mdm_cmd_buf_len < sizeof(mdm_cmd_buf))
+            mdm_cmd_buf[mdm_cmd_buf_len] = 0;
+        // Clear the entire buffer after null-terminator to prevent garbage
+        for (size_t i = mdm_cmd_buf_len + 1; i < sizeof(mdm_cmd_buf); i++)
+            mdm_cmd_buf[i] = 0;
+        
         mdm_cmd_buf_len = 0;
         if (mdm_cmd_buf_is_at_command())
         {
@@ -284,8 +278,6 @@ static int mdm_tx_command_mode(char ch)
             mdm_is_parsing = true;
             mdm_parse_result = true;
             mdm_parse_str = &mdm_cmd_buf[2];
-            DBG("MDM: Starting parse, parse_str='%s', parse_str[0]=0x%02x, &cmd_buf[2]=%p, in_command_mode=%d\n",
-                mdm_parse_str, (unsigned char)*mdm_parse_str, (void*)&mdm_cmd_buf[2], mdm_in_command_mode);
         }
     }
     else if (ch == 127 || (!(mdm_settings.bs_char & 0x80) && ch == mdm_settings.bs_char))
@@ -299,28 +291,38 @@ static int mdm_tx_command_mode(char ch)
         if (mdm_cmd_buf_len)
             mdm_cmd_buf[--mdm_cmd_buf_len] = 0;
     }
-    else if (ch >= 32 && ch < 127)
+    else
     {
-        if (mdm_settings.echo)
-            mdm_response_append(ch);
-        if (ch == '/' && mdm_cmd_buf_len == 1)
+        // All other characters - ALWAYS clear buffer on first character of new command (when buffer is empty)
+        if (mdm_cmd_buf_len == 0)
+            memset(mdm_cmd_buf, 0, sizeof(mdm_cmd_buf));
+        
+        // Only process printable characters (32-126)
+        if (ch >= 32 && ch < 127)
         {
-            if (mdm_settings.echo || (!mdm_settings.quiet && mdm_settings.verbose))
-                mdm_response_append_cr_lf();
-            mdm_cmd_buf_len = 0;
-            mdm_is_parsing = true;
-            if (mdm_cmd_buf_is_at_command())
+            if (mdm_settings.echo)
+                mdm_response_append(ch);
+            if (ch == '/' && mdm_cmd_buf_len == 1)
             {
-
-                mdm_parse_result = true;
-                mdm_parse_str = &mdm_cmd_buf[2];
+                if (mdm_settings.echo || (!mdm_settings.quiet && mdm_settings.verbose))
+                    mdm_response_append_cr_lf();
+                mdm_cmd_buf_len = 0;
+                // Clear buffer after reset
+                memset(mdm_cmd_buf, 0, sizeof(mdm_cmd_buf));
+                mdm_is_parsing = true;
+                if (mdm_cmd_buf_is_at_command())
+                {
+                    mdm_parse_result = true;
+                    mdm_parse_str = &mdm_cmd_buf[2];
+                }
+                else
+                    mdm_parse_result = false; // immediate error
+                return 1;
             }
-            else
-                mdm_parse_result = false; // immediate error
-            return 1;
+            if (mdm_cmd_buf_len < MDM_AT_COMMAND_LEN)
+                mdm_cmd_buf[mdm_cmd_buf_len++] = ch;
         }
-        if (mdm_cmd_buf_len < MDM_AT_COMMAND_LEN)
-            mdm_cmd_buf[mdm_cmd_buf_len++] = ch;
+        // Silently ignore control characters (< 32) - don't add them to buffer
     }
     return 1;
 }
@@ -629,23 +631,25 @@ void mdm_task()
     {
         if (mdm_response_state >= 0)
             return;
-        if (!mdm_parse_result)
+        // Check for empty parse string FIRST - don't try to parse null terminator
+        if (*mdm_parse_str == 0)
         {
-            DBG("MDM: Parse failed, sending ERROR\n");
-            mdm_is_parsing = false;
-            mdm_set_response_fn(mdm_response_code, 4); // ERROR
-        }
-        else if (*mdm_parse_str == 0)
-        {
-            DBG("MDM: Parse complete, parse_str empty, in_command_mode=%d\n", mdm_in_command_mode);
             mdm_is_parsing = false;
             if (mdm_in_command_mode)
                 mdm_set_response_fn(mdm_response_code, 0); // OK
         }
+        else if (!mdm_parse_result)
+        {
+            mdm_is_parsing = false;
+            mdm_set_response_fn(mdm_response_code, 4); // ERROR
+        }
         else
         {
-            DBG("MDM: Parsing next char: '%c' (0x%02x)\n", *mdm_parse_str, *mdm_parse_str);
-            mdm_parse_result = cmd_parse(&mdm_parse_str);
+            // Parse next character
+            if (mdm_parse_str != NULL)
+                mdm_parse_result = cmd_parse(&mdm_parse_str);
+            else
+                mdm_parse_result = false;
         }
     }
     if (mdm_escape_count == MDM_ESCAPE_COUNT &&
@@ -692,14 +696,12 @@ bool mdm_connect(void)
     if (mdm_state == mdm_state_dialing ||
         mdm_state == mdm_state_connected)
     {
-        if (mdm_settings.progress > 0)
-            mdm_set_response_fn(mdm_response_code, 5); // CONNECT 1200
-        else
-            mdm_set_response_fn(mdm_response_code, 1); // CONNECT
         mdm_state = mdm_state_connected;
         // Stay in command mode for ESP8266 compatibility
         // Data is sent via AT+CIPSEND, not by going offline
         mdm_in_command_mode = true;
+        // Note: CONNECT notification is sent via URC, not as response
+        // This allows AT+CIPSEND to follow without response conflict
         return true;
     }
     return false;
@@ -742,7 +744,7 @@ int mdm_get_state(void)
 
 bool mdm_begin_send(size_t len)
 {
-    if (mdm_state != mdm_state_connected)
+    if (mdm_state != mdm_state_connected && mdm_state != mdm_state_dialing)
         return false;
     if (len == 0)
         return false;
