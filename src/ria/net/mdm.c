@@ -43,6 +43,11 @@ static size_t mdm_tx_buf_len;
 #define MDM_ESCAPE_GUARD_TIME_US 1000000
 #define MDM_ESCAPE_COUNT 3
 
+// Batch transmission: accumulate data before sending
+#define MDM_SEND_BATCH_SIZE 256         // Send after accumulating this many bytes
+#define MDM_SEND_BATCH_TIMEOUT_US 5000 // Or after this timeout in microseconds
+static absolute_time_t mdm_tx_batch_start;
+
 // Old modems have 40 chars, Hayes V.series has 255.
 #define MDM_AT_COMMAND_LEN (255)
 static char mdm_cmd_buf[MDM_AT_COMMAND_LEN + 1];
@@ -257,19 +262,8 @@ static bool mdm_cmd_buf_is_at_command(void)
 
 static int mdm_tx_command_mode(char ch)
 {
-    // Note: We don't block on mdm_response_state anymore
-    // This allows commands to be accepted even if previous response hasn't been consumed
-    // The response buffer will handle overflow by discarding old data
     if (ch == '\r' || (!(mdm_settings.cr_char & 0x80) && ch == mdm_settings.cr_char))
     {
-        // DEBUG
-        char debug_buf[128];
-        snprintf(debug_buf, sizeof(debug_buf), "+DBG:CR len=%zu [0]=0x%02x [1]=0x%02x [2]=0x%02x\r\n",
-                 mdm_cmd_buf_len, (unsigned char)mdm_cmd_buf[0], 
-                 (unsigned char)mdm_cmd_buf[1], (unsigned char)mdm_cmd_buf[2]);
-        for (const char *p = debug_buf; *p; p++)
-            mdm_response_append(*p);
-        
         if (mdm_settings.echo)
             mdm_response_append_cr_lf();
         // Null-terminate the command at current position
@@ -278,13 +272,6 @@ static int mdm_tx_command_mode(char ch)
         // Clear the entire buffer after null-terminator to prevent garbage
         for (size_t i = mdm_cmd_buf_len + 1; i < sizeof(mdm_cmd_buf); i++)
             mdm_cmd_buf[i] = 0;
-        
-        // DEBUG
-        snprintf(debug_buf, sizeof(debug_buf), "+DBG:AfterClear [0]=0x%02x [1]=0x%02x [2]=0x%02x\r\n",
-                 (unsigned char)mdm_cmd_buf[0], (unsigned char)mdm_cmd_buf[1], 
-                 (unsigned char)mdm_cmd_buf[2]);
-        for (const char *p = debug_buf; *p; p++)
-            mdm_response_append(*p);
         
         mdm_cmd_buf_len = 0;
         if (mdm_cmd_buf_is_at_command())
@@ -347,6 +334,11 @@ static int mdm_tx_connected(char ch)
 {
     if (mdm_tx_buf_len >= MDM_TX_BUF_SIZE)
         return 0;
+    
+    // Start batch timer on first character
+    if (mdm_tx_buf_len == 0)
+        mdm_tx_batch_start = get_absolute_time();
+    
     mdm_tx_buf[mdm_tx_buf_len++] = ch;
     return 1;
 }
@@ -373,6 +365,7 @@ int mdm_tx(char ch)
         return -1;
     mdm_tx_escape_observer(ch);
     // Handle send prompt mode (AT+CIPSEND=len)
+    if (mdm_in_send_mode && mdm_send_remaining > 0)
     if (mdm_in_send_mode && mdm_send_remaining > 0)
     {
         int result = mdm_tx_connected(ch);
@@ -625,11 +618,29 @@ bool mdm_read_settings(mdm_settings_t *settings)
 
 void mdm_task()
 {
-    // Send buffered data when in send mode (ESP8266 CIPSEND), or when not in command mode (traditional)
+    // Batch transmission: Send buffered data when in send mode if:
+    // 1. Buffer reaches batch size threshold, OR
+    // 2. Batch timeout expires, OR
+    // 3. Send mode is ending (all data received)
     if (mdm_in_send_mode && mdm_tx_buf_len)
     {
-        if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
-            mdm_tx_buf_len = 0;
+        bool should_send = false;
+        
+        // Threshold: buffer is full
+        if (mdm_tx_buf_len >= MDM_SEND_BATCH_SIZE)
+            should_send = true;
+        // Timeout: data waiting too long
+        else if (absolute_time_diff_us(mdm_tx_batch_start, get_absolute_time()) > MDM_SEND_BATCH_TIMEOUT_US)
+            should_send = true;
+        // Final flush: no more data coming (mdm_send_remaining == 0 means send mode ending)
+        else if (!mdm_in_send_mode || mdm_send_remaining == 0)
+            should_send = true;
+        
+        if (should_send)
+        {
+            if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
+                mdm_tx_buf_len = 0;
+        }
     }
     else if (!mdm_in_command_mode && mdm_tx_buf_len)
     {
@@ -656,21 +667,12 @@ void mdm_task()
         // Check for empty parse string FIRST - don't try to parse null terminator
         if (*mdm_parse_str == 0)
         {
-            char debug_buf[64];
-            snprintf(debug_buf, sizeof(debug_buf), "+DBG:Empty,cmdmode=%d\r\n", mdm_in_command_mode);
-            for (const char *p = debug_buf; *p; p++)
-                mdm_response_append(*p);
             mdm_is_parsing = false;
             if (mdm_in_command_mode)
                 mdm_set_response_fn(mdm_response_code, 0); // OK
         }
         else if (!mdm_parse_result)
         {
-            char debug_buf[96];
-            snprintf(debug_buf, sizeof(debug_buf), "+DBG:ParseFail,ch=0x%02x,cmdmode=%d\r\n", 
-                     (unsigned char)*mdm_parse_str, mdm_in_command_mode);
-            for (const char *p = debug_buf; *p; p++)
-                mdm_response_append(*p);
             mdm_is_parsing = false;
             mdm_set_response_fn(mdm_response_code, 4); // ERROR
         }
