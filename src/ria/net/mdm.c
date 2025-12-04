@@ -257,10 +257,19 @@ static bool mdm_cmd_buf_is_at_command(void)
 
 static int mdm_tx_command_mode(char ch)
 {
-    if (mdm_response_state >= 0)
-        return 0;
+    // Note: We don't block on mdm_response_state anymore
+    // This allows commands to be accepted even if previous response hasn't been consumed
+    // The response buffer will handle overflow by discarding old data
     if (ch == '\r' || (!(mdm_settings.cr_char & 0x80) && ch == mdm_settings.cr_char))
     {
+        // DEBUG
+        char debug_buf[128];
+        snprintf(debug_buf, sizeof(debug_buf), "+DBG:CR len=%zu [0]=0x%02x [1]=0x%02x [2]=0x%02x\r\n",
+                 mdm_cmd_buf_len, (unsigned char)mdm_cmd_buf[0], 
+                 (unsigned char)mdm_cmd_buf[1], (unsigned char)mdm_cmd_buf[2]);
+        for (const char *p = debug_buf; *p; p++)
+            mdm_response_append(*p);
+        
         if (mdm_settings.echo)
             mdm_response_append_cr_lf();
         // Null-terminate the command at current position
@@ -269,6 +278,13 @@ static int mdm_tx_command_mode(char ch)
         // Clear the entire buffer after null-terminator to prevent garbage
         for (size_t i = mdm_cmd_buf_len + 1; i < sizeof(mdm_cmd_buf); i++)
             mdm_cmd_buf[i] = 0;
+        
+        // DEBUG
+        snprintf(debug_buf, sizeof(debug_buf), "+DBG:AfterClear [0]=0x%02x [1]=0x%02x [2]=0x%02x\r\n",
+                 (unsigned char)mdm_cmd_buf[0], (unsigned char)mdm_cmd_buf[1], 
+                 (unsigned char)mdm_cmd_buf[2]);
+        for (const char *p = debug_buf; *p; p++)
+            mdm_response_append(*p);
         
         mdm_cmd_buf_len = 0;
         if (mdm_cmd_buf_is_at_command())
@@ -609,7 +625,13 @@ bool mdm_read_settings(mdm_settings_t *settings)
 
 void mdm_task()
 {
-    if (!mdm_in_command_mode && mdm_tx_buf_len)
+    // Send buffered data when in send mode (ESP8266 CIPSEND), or when not in command mode (traditional)
+    if (mdm_in_send_mode && mdm_tx_buf_len)
+    {
+        if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
+            mdm_tx_buf_len = 0;
+    }
+    else if (!mdm_in_command_mode && mdm_tx_buf_len)
     {
         if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
             mdm_tx_buf_len = 0;
@@ -634,12 +656,21 @@ void mdm_task()
         // Check for empty parse string FIRST - don't try to parse null terminator
         if (*mdm_parse_str == 0)
         {
+            char debug_buf[64];
+            snprintf(debug_buf, sizeof(debug_buf), "+DBG:Empty,cmdmode=%d\r\n", mdm_in_command_mode);
+            for (const char *p = debug_buf; *p; p++)
+                mdm_response_append(*p);
             mdm_is_parsing = false;
             if (mdm_in_command_mode)
                 mdm_set_response_fn(mdm_response_code, 0); // OK
         }
         else if (!mdm_parse_result)
         {
+            char debug_buf[96];
+            snprintf(debug_buf, sizeof(debug_buf), "+DBG:ParseFail,ch=0x%02x,cmdmode=%d\r\n", 
+                     (unsigned char)*mdm_parse_str, mdm_in_command_mode);
+            for (const char *p = debug_buf; *p; p++)
+                mdm_response_append(*p);
             mdm_is_parsing = false;
             mdm_set_response_fn(mdm_response_code, 4); // ERROR
         }
