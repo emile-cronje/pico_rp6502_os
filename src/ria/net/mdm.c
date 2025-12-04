@@ -45,7 +45,7 @@ static size_t mdm_tx_buf_len;
 
 // Batch transmission: accumulate data before sending
 #define MDM_SEND_BATCH_SIZE 256         // Send after accumulating this many bytes
-#define MDM_SEND_BATCH_TIMEOUT_US 5000 // Or after this timeout in microseconds
+#define MDM_SEND_BATCH_TIMEOUT_US 50000 // Or after this timeout in microseconds (50ms)
 static absolute_time_t mdm_tx_batch_start;
 
 // Old modems have 40 chars, Hayes V.series has 255.
@@ -621,30 +621,29 @@ void mdm_task()
     // Batch transmission: Send buffered data when in send mode if:
     // 1. Buffer reaches batch size threshold, OR
     // 2. Batch timeout expires, OR
-    // 3. Send mode is ending (all data received)
-    if (mdm_in_send_mode && mdm_tx_buf_len)
+    // 3. Send mode completed (all expected data has arrived and been buffered)
+    if (mdm_tx_buf_len > 0)
     {
         bool should_send = false;
         
-        // Threshold: buffer is full
-        if (mdm_tx_buf_len >= MDM_SEND_BATCH_SIZE)
-            should_send = true;
-        // Timeout: data waiting too long
-        else if (absolute_time_diff_us(mdm_tx_batch_start, get_absolute_time()) > MDM_SEND_BATCH_TIMEOUT_US)
-            should_send = true;
-        // Final flush: no more data coming (mdm_send_remaining == 0 means send mode ending)
-        else if (!mdm_in_send_mode || mdm_send_remaining == 0)
-            should_send = true;
-        
-        if (should_send)
+        if (mdm_in_send_mode)
         {
-            if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
-                mdm_tx_buf_len = 0;
+            // In send mode: batch by size or timeout
+            if (mdm_tx_buf_len >= MDM_SEND_BATCH_SIZE)
+                should_send = true;
+            else if (absolute_time_diff_us(mdm_tx_batch_start, get_absolute_time()) > MDM_SEND_BATCH_TIMEOUT_US)
+                should_send = true;
+            // Final flush: all expected bytes received and we have them buffered
+            else if (mdm_send_remaining == 0 && !mdm_in_send_mode)
+                should_send = true;
         }
-    }
-    else if (!mdm_in_command_mode && mdm_tx_buf_len)
-    {
-        if (tel_tx(mdm_tx_buf, mdm_tx_buf_len))
+        else
+        {
+            // Not in send mode: send immediately (traditional modem mode)
+            should_send = true;
+        }
+        
+        if (should_send && tel_tx(mdm_tx_buf, mdm_tx_buf_len))
             mdm_tx_buf_len = 0;
     }
     // Publish pending URCs when not busy
