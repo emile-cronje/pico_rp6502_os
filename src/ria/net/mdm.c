@@ -54,7 +54,7 @@ static char mdm_cmd_buf[MDM_AT_COMMAND_LEN + 1];
 static size_t mdm_cmd_buf_len;
 
 // Must fit 80 columns plus a couple CRLFs
-#define MDM_RESPONSE_BUF_SIZE (128)
+#define MDM_RESPONSE_BUF_SIZE (1024)
 static char mdm_response_buf[MDM_RESPONSE_BUF_SIZE];
 static size_t mdm_response_buf_head;
 static size_t mdm_response_buf_tail;
