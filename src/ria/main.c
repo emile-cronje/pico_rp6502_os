@@ -23,6 +23,7 @@
 #include "net/ble.h"
 #include "net/cyw.h"
 #include "net/mdm.h"
+#include "net/mq.h"
 #include "net/ntp.h"
 #include "net/wfi.h"
 #include "sys/com.h"
@@ -75,6 +76,7 @@ static void init(void)
     rom_init();
     clk_init();
     mdm_init();
+    mq_init();
 }
 
 // Task events are repeatedly called by the main loop.
@@ -98,6 +100,7 @@ void main_task(void)
     ble_task();
     led_task();
     mdm_task();
+    mq_task();
     ram_task();
 }
 
@@ -141,6 +144,7 @@ static void stop(void)
     pad_stop();
     aud_stop();
     mdm_stop();
+    mq_stop();
 }
 
 // Event for CTRL-ALT-DEL and UART breaks.
@@ -284,6 +288,28 @@ bool main_api(uint8_t operation)
         return dir_api_getlabel();
     case 0x2E:
         return dir_api_getfree();
+    case 0x30:
+        return mq_api_connect();
+    case 0x31:
+        return mq_api_disconnect();
+    case 0x32:
+        return mq_api_publish();
+    case 0x33:
+        return mq_api_subscribe();
+    case 0x34:
+        return mq_api_unsubscribe();
+    case 0x35:
+        return mq_api_poll();
+    case 0x36:
+        return mq_api_read_message();
+    case 0x37:
+        return mq_api_get_topic();
+    case 0x38:
+        return mq_api_connected();
+    case 0x39:
+        return mq_api_set_auth();
+    case 0x3A:
+        return mq_api_set_will();
     }
     return api_return_errno(API_ENOSYS);
 }

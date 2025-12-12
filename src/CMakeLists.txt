@@ -96,6 +96,7 @@ target_sources(${RIA_TARGET} PRIVATE
     ria/net/cmd.c
     ria/net/cyw.c
     ria/net/mdm.c
+    ria/net/mq.c
     ria/net/ntp.c
     ria/net/tel.c
     ria/net/wfi.c
