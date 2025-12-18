@@ -30,6 +30,8 @@ bool mq_api_set_will(void) { return false; }
 #include <lwip/dns.h>
 #include <string.h>
 
+#define DEBUG_RIA_NET 1
+
 #if defined(DEBUG_RIA_NET) || defined(DEBUG_RIA_NET_MQ)
 #include <stdio.h>
 #define DBG(...) fprintf(stderr, __VA_ARGS__)
@@ -202,15 +204,15 @@ static uint16_t mq_encode_string(uint8_t *buf, const char *str, uint16_t len)
     return len + 2;
 }
 
-static uint16_t mq_decode_string(const uint8_t *buf, char *str, uint16_t max_len)
-{
-    uint16_t len = (buf[0] << 8) | buf[1];
-    if (len > max_len - 1)
-        len = max_len - 1;
-    memcpy(str, buf + 2, len);
-    str[len] = '\0';
-    return len;
-}
+// static uint16_t mq_decode_string(const uint8_t *buf, char *str, uint16_t max_len)
+// {
+//     uint16_t len = (buf[0] << 8) | buf[1];
+//     if (len > max_len - 1)
+//         len = max_len - 1;
+//     memcpy(str, buf + 2, len);
+//     str[len] = '\0';
+//     return len;
+// }
 
 /* MQTT Packet Building */
 
@@ -682,34 +684,35 @@ bool mq_api_connect(void)
     if (mq.state != MQ_STATE_IDLE)
         return api_return_errno(API_EBUSY);
     
-    // Pop parameters from stack
-    uint16_t port;
-    if (!api_pop_uint16_end(&port))
-        return api_return_errno(API_EINVAL);
-    
-    // Get hostname from XRAM
-    uint16_t hostname_addr = API_AX;
-    if (hostname_addr >= sizeof(xram))
+    // Get hostname from XRAM (passed in A/X)
+    uint32_t hostname_addr = API_AX;
+    if (hostname_addr >= XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     char hostname[256];
     size_t i;
-    for (i = 0; i < sizeof(hostname) - 1 && hostname_addr + i < sizeof(xram); i++) {
+
+    DBG("MQTT: Reading hostname from xram[0x%04lx]:\n", (unsigned long)hostname_addr);
+    for (i = 0; i < sizeof(hostname) - 1 && hostname_addr + i < XRAM_SIZE; i++) {
         hostname[i] = xram[hostname_addr + i];
+        DBG("  [%zu] = 0x%02x '%c'\n", i, (unsigned char)hostname[i], 
+            hostname[i] >= 32 && hostname[i] < 127 ? hostname[i] : '.');
         if (hostname[i] == 0)
             break;
     }
     hostname[i] = '\0';
+    DBG("MQTT: Hostname read: '%s' (length %zu)\n", hostname, i);
     
-    // Get client_id from stack
-    uint16_t client_id_addr;
-    if (!api_pop_uint16(&client_id_addr))
+    // Pop client_id from stack first
+    uint16_t client_id_addr16;
+    if (!api_pop_uint16(&client_id_addr16))
+        return api_return_errno(API_EINVAL);
+
+    uint32_t client_id_addr = client_id_addr16;
+    if (client_id_addr >= XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
-    if (client_id_addr >= sizeof(xram))
-        return api_return_errno(API_EINVAL);
-    
-    for (i = 0; i < sizeof(mq.client_id) - 1 && client_id_addr + i < sizeof(xram); i++) {
+    for (i = 0; i < sizeof(mq.client_id) - 1 && client_id_addr + i < XRAM_SIZE; i++) {
         mq.client_id[i] = xram[client_id_addr + i];
         if (mq.client_id[i] == 0)
             break;
@@ -718,6 +721,11 @@ bool mq_api_connect(void)
     
     if (strlen(mq.client_id) == 0)
         strcpy(mq.client_id, "rp6502");
+    
+    // Pop port last with _end variant
+    uint16_t port;
+    if (!api_pop_uint16_end(&port))
+        return api_return_errno(API_EINVAL);
     
     DBG("MQTT: Connecting to %s:%d as %s\n", hostname, port, mq.client_id);
     
@@ -776,8 +784,8 @@ bool mq_api_publish(void)
     if (!api_pop_uint16_end(&payload_addr))
         return api_return_errno(API_EINVAL);
     
-    if (topic_addr + topic_len > sizeof(xram) || 
-        payload_addr + payload_len > sizeof(xram))
+    if (topic_addr + topic_len > XRAM_SIZE || 
+        payload_addr + payload_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     if (!mq_build_publish((char *)(xram + topic_addr), topic_len,
@@ -810,7 +818,7 @@ bool mq_api_subscribe(void)
     if (!api_pop_uint16_end(&topic_addr))
         return api_return_errno(API_EINVAL);
     
-    if (topic_addr + topic_len > sizeof(xram))
+    if (topic_addr + topic_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     if (!mq_build_subscribe((char *)(xram + topic_addr), topic_len, qos & 0x03))
@@ -838,7 +846,7 @@ bool mq_api_unsubscribe(void)
     if (!api_pop_uint16_end(&topic_addr))
         return api_return_errno(API_EINVAL);
     
-    if (topic_addr + topic_len > sizeof(xram))
+    if (topic_addr + topic_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     if (!mq_build_unsubscribe((char *)(xram + topic_addr), topic_len))
@@ -871,7 +879,7 @@ bool mq_api_read_message(void)
     if (!api_pop_uint16_end(&buf_addr))
         return api_return_errno(API_EINVAL);
     
-    if (buf_addr + buf_len > sizeof(xram))
+    if (buf_addr + buf_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     uint16_t copy_len = mq.current_payload_len;
@@ -896,7 +904,7 @@ bool mq_api_get_topic(void)
     if (!api_pop_uint16_end(&buf_addr))
         return api_return_errno(API_EINVAL);
     
-    if (buf_addr + buf_len > sizeof(xram))
+    if (buf_addr + buf_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     uint16_t copy_len = mq.current_topic_len;
@@ -929,8 +937,8 @@ bool mq_api_set_auth(void)
     if (!api_pop_uint16_end(&username_addr))
         return api_return_errno(API_EINVAL);
     
-    if (username_addr + username_len > sizeof(xram) ||
-        password_addr + password_len > sizeof(xram))
+    if (username_addr + username_len > XRAM_SIZE ||
+        password_addr + password_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     if (username_len >= MQTT_USERNAME_MAX)
@@ -968,8 +976,8 @@ bool mq_api_set_will(void)
     if (!api_pop_uint16_end(&will_payload_addr))
         return api_return_errno(API_EINVAL);
     
-    if (will_topic_addr + will_topic_len > sizeof(xram) ||
-        will_payload_addr + will_payload_len > sizeof(xram))
+    if (will_topic_addr + will_topic_len > XRAM_SIZE ||
+        will_payload_addr + will_payload_len > XRAM_SIZE)
         return api_return_errno(API_EINVAL);
     
     if (will_topic_len >= MQTT_TOPIC_BUF_SIZE)

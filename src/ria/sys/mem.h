@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 // 64KB Extended RAM
+#define XRAM_SIZE 0x10000
 #ifdef NDEBUG
 extern uint8_t xram[];
 #else
