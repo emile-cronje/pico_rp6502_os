@@ -73,6 +73,7 @@ uint16_t api_fresult_errno(unsigned fresult);
 #define API_SREG REGSW(0xFFF8)
 #define API_AX (API_A | (API_X << 8))
 #define API_AXSREG (API_AX | (API_SREG << 16))
+#define API_MQ_PUBLISH_DONE REGS(0xFFE1)
 
 // How to build an API handler:
 // 1. The last fastcall argument is in API_A, API_AX or API_AXSREG.

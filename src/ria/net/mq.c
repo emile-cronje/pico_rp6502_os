@@ -766,6 +766,9 @@ bool mq_api_publish(void)
     if (mq.state != MQ_STATE_CONNECTED)
         return api_return_errno(API_EINVAL);
     
+    // Reset publish_done flag before attempting publish
+    API_MQ_PUBLISH_DONE = 0;
+    
     uint8_t qos, retain;
     uint16_t topic_len, payload_len;
     uint16_t topic_addr, payload_addr;
@@ -797,6 +800,7 @@ bool mq_api_publish(void)
     if (err == ERR_OK) {
         tcp_output(mq.pcb);
         mq_update_activity();
+        API_MQ_PUBLISH_DONE = 1;
         return api_return_ax(0);
     }
     
