@@ -108,6 +108,10 @@ static struct {
     // Packet ID management
     uint16_t next_packet_id;
     
+    // Inflight QoS tracking
+    uint16_t inflight_packet_id;
+    bool waiting_for_puback;
+    
     // Keepalive
     absolute_time_t last_activity;
     absolute_time_t last_ping;
@@ -155,6 +159,8 @@ static void mq_reset(void)
     mq.message_available = false;
     mq.current_topic_len = 0;
     mq.current_payload_len = 0;
+    mq.waiting_for_puback = false;
+    mq.inflight_packet_id = 0;
 }
 
 static void mq_update_activity(void)
@@ -320,8 +326,9 @@ static bool mq_build_publish(const char *topic, uint16_t topic_len,
     pos += mq_encode_string(buf + pos, topic, topic_len);
     
     // Packet ID (for QoS > 0)
+    uint16_t packet_id = 0;
     if (qos > 0) {
-        uint16_t packet_id = mq_get_packet_id();
+        packet_id = mq_get_packet_id();
         buf[pos++] = (packet_id >> 8) & 0xFF;
         buf[pos++] = packet_id & 0xFF;
     }
@@ -331,6 +338,13 @@ static bool mq_build_publish(const char *topic, uint16_t topic_len,
     pos += payload_len;
     
     mq.tx_buf_len = pos;
+    
+    // Track inflight for QoS > 0
+    if (qos > 0) {
+        mq.inflight_packet_id = packet_id;
+        mq.waiting_for_puback = true;
+    }
+    
     return true;
 }
 
@@ -458,6 +472,28 @@ static void mq_handle_publish(const uint8_t *buf, uint16_t len)
     DBG("MQTT: Received message on '%s'\n", mq.current_topic);
 }
 
+static void mq_handle_puback(const uint8_t *buf, uint16_t len)
+{
+    if (len < 2) {
+        DBG("MQTT: PUBACK too short\n");
+        return;
+    }
+    
+    // Extract packet ID from PUBACK
+    uint16_t packet_id = (buf[0] << 8) | buf[1];
+    
+    // Match against inflight message
+    if (mq.waiting_for_puback && packet_id == mq.inflight_packet_id) {
+        DBG("MQTT: PUBACK received for packet %d\n", packet_id);
+        mq.waiting_for_puback = false;
+        mq.inflight_packet_id = 0;
+        mq_update_activity();
+    } else {
+        DBG("MQTT: PUBACK for unexpected packet %d (expected %d, waiting=%d)\n",
+            packet_id, mq.inflight_packet_id, mq.waiting_for_puback);
+    }
+}
+
 static void mq_handle_pingresp(void)
 {
     DBG("MQTT: PINGRESP received\n");
@@ -483,6 +519,8 @@ static void mq_parse_packet(const uint8_t *buf, uint16_t len)
         mq_handle_publish(payload, remaining_len);
         break;
     case MQTT_MSG_TYPE_PUBACK:
+        mq_handle_puback(payload, remaining_len);
+        break;
     case MQTT_MSG_TYPE_SUBACK:
     case MQTT_MSG_TYPE_UNSUBACK:
         mq_update_activity();
